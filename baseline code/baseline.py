@@ -36,12 +36,9 @@ stride = 10
 WINDOW_GIVEN = 89
 WINDOW_SIZE = 90
 
-N_HIDDENS = 150
+N_HIDDENS = 100
 N_LAYERS = 3
-BATCH_SIZE = 2048
-
-#Time window for sliding
-stride = 20
+BATCH_SIZE = 512
 
 #Dataset Setting
 TRAIN_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
@@ -203,7 +200,9 @@ class Baseline:
         TaPR = etapr.evaluate_haicon(anomalies=ATTACK_LABELS, predictions=FINAL_LABELS)
         print(f"F1: {TaPR['f1']:.3f} (TaP: {TaPR['TaP']:.3f}, TaR: {TaPR['TaR']:.3f})")
         print(f"# of detected anomalies: {len(TaPR['Detected_Anomalies'])}")
-        print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
+        #print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
+
+        return TaPR['f1']
 
     def Testing(self, TEST_DATASET):
 
@@ -358,13 +357,27 @@ class Baseline:
                 ndf[c] = (df[c] - TAG_MIN[c]) / (TAG_MAX[c] - TAG_MIN[c])
         return ndf
 
-    def __init__(self):   
+    def Doin(self):
         #Do training
         self.Training(TRAIN_DATASET, stride)
         #Do Validation
-        self.Validation(VALIDATION_DATASET)
+        f1_score = self.Validation(VALIDATION_DATASET)
         #Do Testing
         self.Testing(TEST_DATASET)
 
+        return f1_score
+
+    def __init__(self):
+        print("[+] Baseline Start")
+
+
 if __name__ == "__main__":
-    Baseline()
+    f1_max = -1
+
+    for stride in (1,20):
+        f1_score = Baseline().Doin()
+        if f1_max < f1_score:
+            f1_max = f1_score
+            tmp_stride = stride
+    print(f1_max)
+    print(tmp_stride)
