@@ -374,7 +374,7 @@ class Baseline:
 if __name__ == "__main__":
     f1_max = -1
 
-    for stride in (1,20):
+    for stride in range(1,20):
         f1_score = Baseline().Doin()
         if f1_max < f1_score:
             f1_max = f1_score
