@@ -15,6 +15,9 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm.notebook import trange
 from TaPR_pkg import etapr
 
+#Setting environment
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
 '''
 ###ORIGINAL###
 #Input
@@ -33,13 +36,22 @@ stride = 10
 WINDOW_GIVEN = 89
 WINDOW_SIZE = 90
 
-N_HIDDENS = 200
+N_HIDDENS = 150
 N_LAYERS = 3
-BATCH_SIZE = 1028
+BATCH_SIZE = 2048
 
 #Time window for sliding
-stride = 5
+stride = 20
 
+#Dataset Setting
+TRAIN_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
+TEST_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")])
+VALIDATION_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")])
+
+#Setting columns to timestame, id, field
+TIMESTAMP_FIELD = "timestamp"
+IDSTAMP_FIELD = 'id'
+ATTACK_FIELD = "attack"
 
 #StackedGRU model
 class StackedGRU(torch.nn.Module):
@@ -75,7 +87,7 @@ class HaiDataset(Dataset):
                 self.valid_idxs.append(L)
         self.valid_idxs = np.array(self.valid_idxs, dtype=np.int32)[::stride]
         self.n_idxs = len(self.valid_idxs)
-        print(f"# of valid windows: {self.n_idxs}")
+        #print(f"# of valid windows: {self.n_idxs}")
         if attacks is not None:
             self.attacks = np.array(attacks, dtype=np.float32)
             self.with_attack = True
@@ -94,276 +106,265 @@ class HaiDataset(Dataset):
         item["answer"] = torch.from_numpy(self.tag_values[last])
         return item
 
-#Normalization
-def normalize(df, TAG_MIN, TAG_MAX):
-    ndf = df.copy()
-    for c in df.columns:
-        if TAG_MIN[c] == TAG_MAX[c]:
-            ndf[c] = df[c] - TAG_MIN[c]
-        else:
-            ndf[c] = (df[c] - TAG_MIN[c]) / (TAG_MAX[c] - TAG_MIN[c])
-    return ndf
-
-def boundary_check(df):
-    x = np.array(df, dtype=np.float32)
-    return np.any(x > 1.0), np.any(x < 0), np.any(np.isnan(x))
-
-def dataframe_from_csv(target):
-    return pd.read_csv(target).rename(columns=lambda x: x.strip())
-
-def dataframe_from_csvs(targets):
-    return pd.concat([dataframe_from_csv(x) for x in targets])
-
-#Do train
-def train(dataset, model, batch_size, n_epochs):
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    optimizer = torch.optim.AdamW(model.parameters())
-    loss_fn = torch.nn.MSELoss()
-    epochs = trange(n_epochs, desc="training")
-    best = {"loss": sys.float_info.max}
-    loss_history = []
-    for e in epochs:
-        epoch_loss = 0
-        for batch in dataloader:
-            optimizer.zero_grad()
-            given = batch["given"].cuda()
-            guess = model(given)
-            answer = batch["answer"].cuda()
-            loss = loss_fn(answer, guess)
-            loss.backward()
-            epoch_loss += loss.item()
-            optimizer.step()
-        loss_history.append(epoch_loss)
-        epochs.set_postfix_str(f"loss: {epoch_loss:.6f}")
-        if epoch_loss < best["loss"]:
-            best["state"] = model.state_dict()
-            best["loss"] = epoch_loss
-            best["epoch"] = e + 1
-    return best, loss_history
-
-def inference(dataset, model, batch_size):
-    dataloader = DataLoader(dataset, batch_size=batch_size)
-    ts, dist, att = [], [], []
-    with torch.no_grad():
-        for batch in dataloader:
-            given = batch["given"].cuda()
-            answer = batch["answer"].cuda()
-            guess = model(given)
-            ts.append(np.array(batch["ts"]))
-            dist.append(torch.abs(answer - guess).cpu().numpy())
-            try:
-                att.append(np.array(batch["attack"]))
-            except:
-                att.append(np.zeros(batch_size))
-            
-    return (
-        np.concatenate(ts),
-        np.concatenate(dist),
-        np.concatenate(att),
-    )
-
-def check_graph(xs, att, piece=2, THRESHOLD=None):
-    l = xs.shape[0]
-    chunk = l // piece
-    fig, axs = plt.subplots(piece, figsize=(20, 4 * piece))
-    for i in range(piece):
-        L = i * chunk
-        R = min(L + chunk, l)
-        xticks = range(L, R)
-        axs[i].plot(xticks, xs[L:R])
-        if len(xs[L:R]) > 0:
-            peak = max(xs[L:R])
-            axs[i].plot(xticks, att[L:R] * peak * 0.3)
-        if THRESHOLD!=None:
-            axs[i].axhline(y=THRESHOLD, color='r')
-    plt.show()
-
-def fill_blank(check_ts, labels, total_ts):
-    def ts_generator():
-        for t in total_ts:
-            yield dateutil.parser.parse(t)
-
-    def label_generator():
-        for t, label in zip(check_ts, labels):
-            yield dateutil.parser.parse(t), label
-
-    g_ts = ts_generator()
-    g_label = label_generator()
-    final_labels = []
-
-    try:
-        current = next(g_ts)
-        ts_label, label = next(g_label)
-        while True:
-            if current > ts_label:
-                ts_label, label = next(g_label)
-                continue
-            elif current < ts_label:
-                final_labels.append(0)
-                current = next(g_ts)
-                continue
-            final_labels.append(label)
-            current = next(g_ts)
-            ts_label, label = next(g_label)
-    except StopIteration:
-        return np.array(final_labels, dtype=np.int8)
-
-os.environ['KMP_DUPLICATE_LIB_OK']='True'
-
-#Dataset Setting
-TRAIN_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
-TEST_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")])
-VALIDATION_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")])
-
-#Setting columns to timestame, id, field
-TIMESTAMP_FIELD = "timestamp"
-IDSTAMP_FIELD = 'id'
-ATTACK_FIELD = "attack"
-
-    #Setting labeling
-def put_labels(distance, threshold):
-    xs = np.zeros_like(distance)
-    xs[distance > threshold] = 1
-    return xs
+class Baseline:
 
 #Training!!!!!!!!!!!!!!
-def Training(TRAIN_DATASET, stride):
-    #Trainset to dataframe
-    TRAIN_DF_RAW = dataframe_from_csvs(TRAIN_DATASET)
-    VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop([TIMESTAMP_FIELD])
+    def Training(self, TRAIN_DATASET, stride):
+        #Trainset to dataframe
+        TRAIN_DF_RAW = Baseline.dataframe_from_csvs(TRAIN_DATASET)
+        self.VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop([TIMESTAMP_FIELD])
 
-    #Tagging min & max
-    TAG_MIN = TRAIN_DF_RAW[VALID_COLUMNS_IN_TRAIN_DATASET].min()
-    TAG_MAX = TRAIN_DF_RAW[VALID_COLUMNS_IN_TRAIN_DATASET].max()
+        #Tagging min & max
+        self.TAG_MIN = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].min()
+        self.TAG_MAX = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].max()
 
-    #Normalizing
-    TRAIN_DF = normalize(TRAIN_DF_RAW[VALID_COLUMNS_IN_TRAIN_DATASET], TAG_MIN, TAG_MAX).ewm(alpha=0.9).mean()
+        #Normalizing
+        TRAIN_DF = Baseline.normalize(TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX).ewm(alpha=0.9).mean()
 
-    #boundary_checking
-    boundary_check(TRAIN_DF)
+        #boundary_checking
+        Baseline.boundary_check(TRAIN_DF)
 
-    #HAI train dataset setting with stride => Define Dataset interface in pytorch
-    #Stride = sliding size, 10 secs interval
-    HAI_DATASET_TRAIN = HaiDataset(TRAIN_DF_RAW[TIMESTAMP_FIELD], TRAIN_DF, stride)
+        #HAI train dataset setting with stride => Define Dataset interface in pytorch
+        #Stride = sliding size, 10 secs interval
+        HAI_DATASET_TRAIN = HaiDataset(TRAIN_DF_RAW[TIMESTAMP_FIELD], TRAIN_DF, stride)
 
-    #Model = bidirectional GRU
-    #Hidden cell size = 100
-    #Not Drop out
-    #Do skip connection(RNN + first output)
-    MODEL = StackedGRU(n_tags=TRAIN_DF.shape[1])
-    #Do Cuda with torch
-    MODEL.cuda()
+        #Model = bidirectional GRU
+        #Hidden cell size = 100
+        #Not Drop out
+        #Do skip connection(RNN + first output)
+        self.MODEL = StackedGRU(n_tags=TRAIN_DF.shape[1])
+        #Do Cuda with torch
+        self.MODEL.cuda()
 
-    #Model training
-    MODEL.train()
-    BEST_MODEL, LOSS_HISTORY = train(HAI_DATASET_TRAIN, MODEL, BATCH_SIZE, 32)
+        #Model training
+        self.MODEL.train()
+        BEST_MODEL, LOSS_HISTORY = Baseline.train(HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, 32)
 
-    #Save Trained model
-    with open("model.pt", "wb") as f:
-        torch.save(
-            {
-                "state": BEST_MODEL["state"],
-                "best_epoch": BEST_MODEL["epoch"],
-                "loss_history": LOSS_HISTORY,
-            },
-            f,
+        #Save Trained model
+        with open("model.pt", "wb") as f:
+            torch.save(
+                {
+                    "state": BEST_MODEL["state"],
+                    "best_epoch": BEST_MODEL["epoch"],
+                    "loss_history": LOSS_HISTORY,
+                },
+                f,
+            )
+
+        #Load model
+        with open("model.pt", "rb") as f:
+            SAVED_MODEL = torch.load(f)
+
+        #load states
+        self.MODEL.load_state_dict(SAVED_MODEL["state"])
+
+        #Check graphs
+        '''
+        plt.figure(figsize=(16, 4))
+        plt.title("Training Loss Graph")
+        plt.xlabel("epochs")
+        plt.ylabel("loss")
+        plt.yscale("log")
+        plt.plot(SAVED_MODEL["loss_history"])
+        plt.show()
+        '''
+
+    def Validation(self, VALIDATION_DATASET):
+        #Load Validation set
+        VALIDATION_DF_RAW = Baseline.dataframe_from_csvs(VALIDATION_DATASET)
+
+        #Normalization validation set
+        VALIDATION_DF = Baseline.normalize(VALIDATION_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX)
+
+        #Validation checks boundary
+        Baseline.boundary_check(VALIDATION_DF)
+
+        self.HAI_DATASET_VALIDATION = HaiDataset(
+            VALIDATION_DF_RAW[TIMESTAMP_FIELD], VALIDATION_DF, attacks=VALIDATION_DF_RAW[ATTACK_FIELD]
         )
 
-    #Load model
-    with open("model.pt", "rb") as f:
-        SAVED_MODEL = torch.load(f)
+        #Evaluate models
+        self.MODEL.eval()
+        CHECK_TS, CHECK_DIST, CHECK_ATT = Baseline.inference(self.HAI_DATASET_VALIDATION, self.MODEL, BATCH_SIZE)
 
-    #load states
-    MODEL.load_state_dict(SAVED_MODEL["state"])
+        #Get Anomaly score
+        ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
-    #Check graphs
-    '''
-    plt.figure(figsize=(16, 4))
-    plt.title("Training Loss Graph")
-    plt.xlabel("epochs")
-    plt.ylabel("loss")
-    plt.yscale("log")
-    plt.plot(SAVED_MODEL["loss_history"])
-    plt.show()
-    '''
-    return MODEL, VALID_COLUMNS_IN_TRAIN_DATASET, TAG_MIN, TAG_MAX
+        #Setting Threshold
+        self.THRESHOLD = 0.026
 
-def Validation(VALIDATION_DATASET, TAG_MIN, TAG_MAX):
-    #Load Validation set
-    VALIDATION_DF_RAW = dataframe_from_csvs(VALIDATION_DATASET)
+        #Check Graph
+        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
 
-    #Normalization validation set
-    VALIDATION_DF = normalize(VALIDATION_DF_RAW[VALID_COLUMNS_IN_TRAIN_DATASET], TAG_MIN, TAG_MAX)
+        LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
+        ATTACK_LABELS = Baseline.put_labels(np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5)
+        FINAL_LABELS = Baseline.fill_blank(CHECK_TS, LABELS, np.array(VALIDATION_DF_RAW[TIMESTAMP_FIELD]))
 
-    #Validation checks boundary
-    boundary_check(VALIDATION_DF)
+        TaPR = etapr.evaluate_haicon(anomalies=ATTACK_LABELS, predictions=FINAL_LABELS)
+        print(f"F1: {TaPR['f1']:.3f} (TaP: {TaPR['TaP']:.3f}, TaR: {TaPR['TaR']:.3f})")
+        print(f"# of detected anomalies: {len(TaPR['Detected_Anomalies'])}")
+        print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
 
-    HAI_DATASET_VALIDATION = HaiDataset(
-        VALIDATION_DF_RAW[TIMESTAMP_FIELD], VALIDATION_DF, attacks=VALIDATION_DF_RAW[ATTACK_FIELD]
-    )
+    def Testing(self, TEST_DATASET):
 
-    #Evaluate models
-    MODEL.eval()
-    CHECK_TS, CHECK_DIST, CHECK_ATT = inference(HAI_DATASET_VALIDATION, MODEL, BATCH_SIZE)
+        #Get test set
+        TEST_DF_RAW = Baseline.dataframe_from_csvs(TEST_DATASET)
 
-    #Get Anomaly score
-    ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
+        #Baseline.Normalize test
+        TEST_DF = Baseline.normalize(TEST_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX).ewm(alpha=0.9).mean()
 
-    #Setting Threshold
-    THRESHOLD = 0.026
+        #Test set boundary checking
+        Baseline.boundary_check(TEST_DF)
 
-    #Check Graph
-    #check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
+        HAI_DATASET_TEST = HaiDataset(
+            TEST_DF_RAW[TIMESTAMP_FIELD], TEST_DF, attacks=None
+        )
+        #print(HAI_DATASET_VALIDATION[0])
 
-    LABELS = put_labels(ANOMALY_SCORE, THRESHOLD)
-    ATTACK_LABELS = put_labels(np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5)
-    FINAL_LABELS = fill_blank(CHECK_TS, LABELS, np.array(VALIDATION_DF_RAW[TIMESTAMP_FIELD]))
+        self.MODEL.eval()
+        CHECK_TS, CHECK_DIST, CHECK_ATT = Baseline.inference(HAI_DATASET_TEST, self.MODEL, BATCH_SIZE)
 
-    TaPR = etapr.evaluate_haicon(anomalies=ATTACK_LABELS, predictions=FINAL_LABELS)
-    print(f"F1: {TaPR['f1']:.3f} (TaP: {TaPR['TaP']:.3f}, TaR: {TaPR['TaR']:.3f})")
-    print(f"# of detected anomalies: {len(TaPR['Detected_Anomalies'])}")
-    print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
+        ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
-    return HAI_DATASET_VALIDATION, THRESHOLD
+        #Check graph
+        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=THRESHOLD)
 
-def Testing(TEST_DATASET, TAG_MIN, TAG_MAX):
+        LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
 
-    #Get test set
-    TEST_DF_RAW = dataframe_from_csvs(TEST_DATASET)
+        submission = pd.read_csv('235757_HAICon2021_dataset/sample_submission.csv')
+        submission.index = submission['timestamp']
+        submission.loc[CHECK_TS,'attack'] = LABELS
+        #print(submission)
 
-    #Normalize test
-    TEST_DF = normalize(TEST_DF_RAW[VALID_COLUMNS_IN_TRAIN_DATASET], TAG_MIN, TAG_MAX).ewm(alpha=0.9).mean()
+        submission.to_csv('baseline.csv', index=False)
 
-    #Test set boundary checking
-    boundary_check(TEST_DF)
+    #Setting labeling
+    def put_labels(distance, threshold):
+        xs = np.zeros_like(distance)
+        xs[distance > threshold] = 1
+        return xs
 
-    HAI_DATASET_TEST = HaiDataset(
-        TEST_DF_RAW[TIMESTAMP_FIELD], TEST_DF, attacks=None
-    )
-    #print(HAI_DATASET_VALIDATION[0])
+    def fill_blank(check_ts, labels, total_ts):
+        def ts_generator():
+            for t in total_ts:
+                yield dateutil.parser.parse(t)
 
-    MODEL.eval()
-    CHECK_TS, CHECK_DIST, CHECK_ATT = inference(HAI_DATASET_TEST, MODEL, BATCH_SIZE)
+        def label_generator():
+            for t, label in zip(check_ts, labels):
+                yield dateutil.parser.parse(t), label
 
-    ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
+        g_ts = ts_generator()
+        g_label = label_generator()
+        final_labels = []
 
-    #Check graph
-    #check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=THRESHOLD)
+        try:
+            current = next(g_ts)
+            ts_label, label = next(g_label)
+            while True:
+                if current > ts_label:
+                    ts_label, label = next(g_label)
+                    continue
+                elif current < ts_label:
+                    final_labels.append(0)
+                    current = next(g_ts)
+                    continue
+                final_labels.append(label)
+                current = next(g_ts)
+                ts_label, label = next(g_label)
+        except StopIteration:
+            return np.array(final_labels, dtype=np.int8)
 
-    LABELS = put_labels(ANOMALY_SCORE, THRESHOLD)
+    def check_graph(xs, att, piece=2, THRESHOLD=None):
+        l = xs.shape[0]
+        chunk = l // piece
+        fig, axs = plt.subplots(piece, figsize=(20, 4 * piece))
+        for i in range(piece):
+            L = i * chunk
+            R = min(L + chunk, l)
+            xticks = range(L, R)
+            axs[i].plot(xticks, xs[L:R])
+            if len(xs[L:R]) > 0:
+                peak = max(xs[L:R])
+                axs[i].plot(xticks, att[L:R] * peak * 0.3)
+            if THRESHOLD!=None:
+                axs[i].axhline(y=THRESHOLD, color='r')
+        plt.show()
 
-    submission = pd.read_csv('235757_HAICon2021_dataset/sample_submission.csv')
-    submission.index = submission['timestamp']
-    submission.loc[CHECK_TS,'attack'] = LABELS
-    #print(submission)
+#Do train
+    def train(dataset, model, batch_size, n_epochs):
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        optimizer = torch.optim.AdamW(model.parameters())
+        loss_fn = torch.nn.MSELoss()
+        epochs = trange(n_epochs, desc="training")
+        best = {"loss": sys.float_info.max}
+        loss_history = []
+        for e in epochs:
+            epoch_loss = 0
+            for batch in dataloader:
+                optimizer.zero_grad()
+                given = batch["given"].cuda()
+                guess = model(given)
+                answer = batch["answer"].cuda()
+                loss = loss_fn(answer, guess)
+                loss.backward()
+                epoch_loss += loss.item()
+                optimizer.step()
+            loss_history.append(epoch_loss)
+            epochs.set_postfix_str(f"loss: {epoch_loss:.6f}")
+            if epoch_loss < best["loss"]:
+                best["state"] = model.state_dict()
+                best["loss"] = epoch_loss
+                best["epoch"] = e + 1
+        return best, loss_history
 
-    submission.to_csv('baseline.csv', index=False)
+    def inference(dataset, model, batch_size):
+        dataloader = DataLoader(dataset, batch_size=batch_size)
+        ts, dist, att = [], [], []
+        with torch.no_grad():
+            for batch in dataloader:
+                given = batch["given"].cuda()
+                answer = batch["answer"].cuda()
+                guess = model(given)
+                ts.append(np.array(batch["ts"]))
+                dist.append(torch.abs(answer - guess).cpu().numpy())
+                try:
+                    att.append(np.array(batch["attack"]))
+                except:
+                    att.append(np.zeros(batch_size))
+                
+        return (
+            np.concatenate(ts),
+            np.concatenate(dist),
+            np.concatenate(att),
+        )
 
-#Do training
-MODEL, VALID_COLUMNS_IN_TRAIN_DATASET, TAG_MIN, TAG_MAX = Training(TRAIN_DATASET, stride)
+    def dataframe_from_csv(target):
+        return pd.read_csv(target).rename(columns=lambda x: x.strip())
 
-#Do Validation
-HAI_DATASET_VALIDATION, THRESHOLD = Validation(VALIDATION_DATASET, TAG_MIN, TAG_MAX)
+    def dataframe_from_csvs(targets):
+        return pd.concat([Baseline.dataframe_from_csv(x) for x in targets])
 
-###Testing
-Testing(TEST_DATASET, TAG_MIN, TAG_MAX)
+    def boundary_check(df):
+        x = np.array(df, dtype=np.float32)
+        return np.any(x > 1.0), np.any(x < 0), np.any(np.isnan(x))
+
+    #Normalization
+    def normalize(df, TAG_MIN, TAG_MAX):
+        ndf = df.copy()
+        for c in df.columns:
+            if TAG_MIN[c] == TAG_MAX[c]:
+                ndf[c] = df[c] - TAG_MIN[c]
+            else:
+                ndf[c] = (df[c] - TAG_MIN[c]) / (TAG_MAX[c] - TAG_MIN[c])
+        return ndf
+
+    def __init__(self):   
+        #Do training
+        self.Training(TRAIN_DATASET, stride)
+        #Do Validation
+        self.Validation(VALIDATION_DATASET)
+        #Do Testing
+        self.Testing(TEST_DATASET)
+
+if __name__ == "__main__":
+    Baseline()
