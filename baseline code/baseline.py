@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
+import torch.nn as nn
+from tqdm import tqdm
 
 import os
 
@@ -33,12 +35,18 @@ BATCH_SIZE = 512
 stride = 10
 '''
 
-WINDOW_GIVEN = 89
-WINDOW_SIZE = 90
+WINDOW_GIVEN = 79
+WINDOW_SIZE = 80
 
+#Optimal N_HIDDENS = 80
 N_HIDDENS = 100
+#Optimal N_LAYERS = 4
 N_LAYERS = 3
-BATCH_SIZE = 512
+BATCH_SIZE = 1536
+
+#Time window for sliding => optimal stride : 12
+stride = 8
+epoch = 70
 
 #Dataset Setting
 TRAIN_DATASET = sorted([x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
@@ -62,6 +70,7 @@ class StackedGRU(torch.nn.Module):
             dropout=0,
         )
         self.fc = torch.nn.Linear(N_HIDDENS * 2, n_tags)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         x = x.transpose(0, 1)  # (batch, seq, params) -> (seq, batch, params)
@@ -76,11 +85,9 @@ class HaiDataset(Dataset):
         self.ts = np.array(timestamps)
         self.tag_values = np.array(df, dtype=np.float32)
         self.valid_idxs = []
-        for L in trange(len(self.ts) - WINDOW_SIZE + 1):
+        for L in tqdm(range(len(self.ts) - WINDOW_SIZE + 1)):
             R = L + WINDOW_SIZE - 1
-            if dateutil.parser.parse(self.ts[R]) - dateutil.parser.parse(
-                self.ts[L]
-            ) == timedelta(seconds=WINDOW_SIZE - 1):
+            if dateutil.parser.parse(self.ts[R]) - dateutil.parser.parse(self.ts[L]) == timedelta(seconds=WINDOW_SIZE - 1):
                 self.valid_idxs.append(L)
         self.valid_idxs = np.array(self.valid_idxs, dtype=np.int32)[::stride]
         self.n_idxs = len(self.valid_idxs)
@@ -106,7 +113,7 @@ class HaiDataset(Dataset):
 class Baseline:
 
 #Training!!!!!!!!!!!!!!
-    def Training(self, TRAIN_DATASET, stride):
+    def Training(self, TRAIN_DATASET, stride, epoch):
         #Trainset to dataframe
         TRAIN_DF_RAW = Baseline.dataframe_from_csvs(TRAIN_DATASET)
         self.VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop([TIMESTAMP_FIELD])
@@ -135,7 +142,7 @@ class Baseline:
 
         #Model training
         self.MODEL.train()
-        BEST_MODEL, LOSS_HISTORY = Baseline.train(HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, 32)
+        BEST_MODEL, LOSS_HISTORY = Baseline.train(HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, epoch)
 
         #Save Trained model
         with open("model.pt", "wb") as f:
@@ -188,10 +195,10 @@ class Baseline:
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         #Setting Threshold
-        self.THRESHOLD = 0.026
+        self.THRESHOLD = 0.029545
 
         #Check Graph
-        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
+        Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, 2, self.THRESHOLD)
 
         LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
         ATTACK_LABELS = Baseline.put_labels(np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5)
@@ -226,7 +233,7 @@ class Baseline:
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         #Check graph
-        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=THRESHOLD)
+        #Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=self.THRESHOLD)
 
         LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
 
@@ -359,7 +366,7 @@ class Baseline:
 
     def Doin(self):
         #Do training
-        self.Training(TRAIN_DATASET, stride)
+        self.Training(TRAIN_DATASET, stride, epoch)
         #Do Validation
         f1_score = self.Validation(VALIDATION_DATASET)
         #Do Testing
@@ -372,12 +379,4 @@ class Baseline:
 
 
 if __name__ == "__main__":
-    f1_max = -1
-
-    for stride in range(1,20):
-        f1_score = Baseline().Doin()
-        if f1_max < f1_score:
-            f1_max = f1_score
-            tmp_stride = stride
-    print(f1_max)
-    print(tmp_stride)
+    Baseline().Doin()
