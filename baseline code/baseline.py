@@ -39,13 +39,13 @@ WINDOW_GIVEN = 79
 WINDOW_SIZE = 80
 
 #Optimal N_HIDDENS = 80
-N_HIDDENS = 100
+N_HIDDENS = 80
 #Optimal N_LAYERS = 4
 N_LAYERS = 3
 BATCH_SIZE = 1536
 
 #Time window for sliding => optimal stride : 12
-stride = 8
+stride = 4
 epoch = 70
 
 #Dataset Setting
@@ -69,6 +69,7 @@ class StackedGRU(torch.nn.Module):
             bidirectional=True,
             dropout=0,
         )
+        
         self.fc = torch.nn.Linear(N_HIDDENS * 2, n_tags)
         self.relu = nn.ReLU()
 
