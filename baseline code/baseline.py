@@ -38,8 +38,8 @@ stride = 10
 WINDOW_GIVEN = 79
 WINDOW_SIZE = 80
 
-#Optimal N_HIDDENS = 80
-N_HIDDENS = 80
+#Optimal N_HIDDENS = 82
+N_HIDDENS = 82
 #Optimal N_LAYERS = 4
 N_LAYERS = 3
 BATCH_SIZE = 1536
@@ -70,6 +70,7 @@ class StackedGRU(torch.nn.Module):
             dropout=0,
         )
         
+        self.fc = torch.nn.Linear(N_HIDDENS * 2, N_HIDDENS * 2)
         self.fc = torch.nn.Linear(N_HIDDENS * 2, n_tags)
         self.relu = nn.ReLU()
 
@@ -199,7 +200,7 @@ class Baseline:
         self.THRESHOLD = 0.029545
 
         #Check Graph
-        Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, 2, self.THRESHOLD)
+        #Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, 2, self.THRESHOLD)
 
         LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
         ATTACK_LABELS = Baseline.put_labels(np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5)
@@ -380,4 +381,15 @@ class Baseline:
 
 
 if __name__ == "__main__":
-    Baseline().Doin()
+    f1_max = -1
+    hidden_max = -1
+
+    for N_HIDDENS in range(82, 200):
+        tmp_f1 = Baseline().Doin()
+        if f1_max < tmp_f1:
+            f1_max = tmp_f1
+            hidden_max = N_HIDDENS
+            print(tmp_f1)
+            print(hidden_max)
+    print(tmp_f1)
+    print(hidden_max)
