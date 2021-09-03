@@ -35,11 +35,11 @@ stride = 10
 '''
 
 WINDOW_GIVEN = 89
-WINDOW_SIZE = 90
+WINDOW_SIZE = WINDOW_GIVEN+1
 
 N_HIDDENS = 50
 N_LAYERS = 2
-BATCH_SIZE = 1024
+BATCH_SIZE = 512
 
 # Dataset Setting
 TRAIN_DATASET = sorted(
@@ -55,6 +55,8 @@ IDSTAMP_FIELD = 'id'
 ATTACK_FIELD = "attack"
 
 # StackedGRU model
+
+
 class StackedGRU(torch.nn.Module):
     def __init__(self, n_tags):
         super().__init__()
@@ -203,7 +205,7 @@ class Baseline:
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         # Setting Threshold
-        self.THRESHOLD = 0.026
+        self.THRESHOLD = 0.030
 
         # Check Graph
         #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
@@ -405,5 +407,5 @@ if __name__ == "__main__":
     # print(tmp_stride)
 
     ########################################
-    stride = 4
+    stride = 5
     print(Baseline().Doin())
