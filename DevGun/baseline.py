@@ -36,7 +36,6 @@ stride = 10
 
 WINDOW_GIVEN = 89
 WINDOW_SIZE = WINDOW_GIVEN+1
-
 N_HIDDENS = 50
 N_LAYERS = 2
 BATCH_SIZE = 512
@@ -54,10 +53,9 @@ TIMESTAMP_FIELD = "timestamp"
 IDSTAMP_FIELD = 'id'
 ATTACK_FIELD = "attack"
 
-# StackedGRU model
-
 
 class StackedGRU(torch.nn.Module):
+    # StackedGRU model
     def __init__(self, n_tags):
         super().__init__()
         self.rnn = torch.nn.GRU(
@@ -76,10 +74,9 @@ class StackedGRU(torch.nn.Module):
         out = self.fc(outs[-1])
         return x[0] + out
 
-# Dataset Settings
-
 
 class HaiDataset(Dataset):
+    # Dataset Settings
     def __init__(self, timestamps, df, stride=1, attacks=None):
         self.ts = np.array(timestamps)
         self.tag_values = np.array(df, dtype=np.float32)
@@ -113,14 +110,12 @@ class HaiDataset(Dataset):
 
 
 class Baseline:
-
-    # Training!!!!!!!!!!!!!!
+    # Training
     def Training(self, TRAIN_DATASET, stride):
         # Trainset to dataframe
         TRAIN_DF_RAW = Baseline.dataframe_from_csvs(TRAIN_DATASET)
         self.VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop([
                                                                         TIMESTAMP_FIELD])
-
         # Tagging min & max
         self.TAG_MIN = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].min()
         self.TAG_MAX = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].max()
@@ -205,7 +200,7 @@ class Baseline:
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         # Setting Threshold
-        self.THRESHOLD = 0.030
+        self.THRESHOLD = 0.026
 
         # Check Graph
         #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
@@ -396,16 +391,17 @@ class Baseline:
 
 
 if __name__ == "__main__":
-    # f1_max = -1
 
-    # for stride in range(1,20):
-    #     f1_score = Baseline().Doin()
-    #     if f1_max < f1_score:
-    #         f1_max = f1_score
-    #         tmp_stride = stride
-    # print(f1_max)
-    # print(tmp_stride)
+    # Run in range
+    f1_max = -1
+    for stride in range(1, 11):
+        f1_score = Baseline().Doin()
+        if f1_max < f1_score:
+            f1_max = f1_score
+            tmp_stride = stride
+    print("F1 Max:", f1_max)
+    print("Stride:", tmp_stride)
 
-    ########################################
-    stride = 5
-    print(Baseline().Doin())
+    # Run only one
+    # stride = 5
+    # print(Baseline().Doin())
