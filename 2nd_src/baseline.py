@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
+import torch.nn as nn
 from tqdm import tqdm
 
 import os
@@ -17,9 +18,9 @@ from tqdm.notebook import trange
 from TaPR_pkg import etapr
 
 # Setting environment
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
-'''
+"""
 ###ORIGINAL###
 #Input
 WINDOW_GIVEN = 89
@@ -32,11 +33,40 @@ BATCH_SIZE = 512
 
 #Time window for sliding
 stride = 10
-'''
+"""
+
+WINDOW_GIVEN = 79
+WINDOW_SIZE = 80
+
+# Optimal N_HIDDENS = 82
+N_HIDDENS = 82
+# Optimal N_LAYERS = 4
+N_LAYERS = 3
+BATCH_SIZE = 1536
+
+# Time window for sliding => optimal stride : 12
+stride = 4
+epoch = 70
+
+# Dataset Setting
+TRAIN_DATASET = sorted(
+    [x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")]
+)
+TEST_DATASET = sorted(
+    [x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")]
+)
+VALIDATION_DATASET = sorted(
+    [x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")]
+)
+
+# Setting columns to timestame, id, field
+TIMESTAMP_FIELD = "timestamp"
+IDSTAMP_FIELD = "id"
+ATTACK_FIELD = "attack"
 
 
+# StackedGRU model
 class StackedGRU(torch.nn.Module):
-    # StackedGRU model
     def __init__(self, n_tags):
         super().__init__()
         self.rnn = torch.nn.GRU(
@@ -46,7 +76,10 @@ class StackedGRU(torch.nn.Module):
             bidirectional=True,
             dropout=0,
         )
+
+        self.fc = torch.nn.Linear(N_HIDDENS * 2, N_HIDDENS * 2)
         self.fc = torch.nn.Linear(N_HIDDENS * 2, n_tags)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         x = x.transpose(0, 1)  # (batch, seq, params) -> (seq, batch, params)
@@ -56,8 +89,8 @@ class StackedGRU(torch.nn.Module):
         return x[0] + out
 
 
+# Dataset Settings
 class HaiDataset(Dataset):
-    # Dataset Settings
     def __init__(self, timestamps, df, stride=1, attacks=None):
         self.ts = np.array(timestamps)
         self.tag_values = np.array(df, dtype=np.float32)
@@ -85,33 +118,41 @@ class HaiDataset(Dataset):
         last = i + WINDOW_SIZE - 1
         item = {"attack": self.attacks[last]} if self.with_attack else {}
         item["ts"] = self.ts[i + WINDOW_SIZE - 1]
-        item["given"] = torch.from_numpy(self.tag_values[i: i + WINDOW_GIVEN])
+        item["given"] = torch.from_numpy(self.tag_values[i : i + WINDOW_GIVEN])
         item["answer"] = torch.from_numpy(self.tag_values[last])
         return item
 
 
 class Baseline:
-    # Training
-    def Training(self, TRAIN_DATASET, stride):
+    # Training!!!!!!!!!!!!!!
+    def Training(self, TRAIN_DATASET, stride, epoch):
         # Trainset to dataframe
         TRAIN_DF_RAW = Baseline.dataframe_from_csvs(TRAIN_DATASET)
-        self.VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop([
-                                                                        TIMESTAMP_FIELD])
+        self.VALID_COLUMNS_IN_TRAIN_DATASET = TRAIN_DF_RAW.columns.drop(
+            [TIMESTAMP_FIELD]
+        )
+
         # Tagging min & max
         self.TAG_MIN = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].min()
         self.TAG_MAX = TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET].max()
 
         # Normalizing
-        TRAIN_DF = Baseline.normalize(
-            TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX).ewm(alpha=0.9).mean()
+        TRAIN_DF = (
+            Baseline.normalize(
+                TRAIN_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET],
+                self.TAG_MIN,
+                self.TAG_MAX,
+            )
+            .ewm(alpha=0.9)
+            .mean()
+        )
 
         # boundary_checking
         Baseline.boundary_check(TRAIN_DF)
 
         # HAI train dataset setting with stride => Define Dataset interface in pytorch
         # Stride = sliding size, 10 secs interval
-        HAI_DATASET_TRAIN = HaiDataset(
-            TRAIN_DF_RAW[TIMESTAMP_FIELD], TRAIN_DF, stride)
+        HAI_DATASET_TRAIN = HaiDataset(TRAIN_DF_RAW[TIMESTAMP_FIELD], TRAIN_DF, stride)
 
         # Model = bidirectional GRU
         # Hidden cell size = 100
@@ -123,10 +164,9 @@ class Baseline:
 
         # Model training
         self.MODEL.train()
-        # BEST_MODEL, LOSS_HISTORY = Baseline.train(
-        #     HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, 32)
         BEST_MODEL, LOSS_HISTORY = Baseline.train(
-            HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, 50)
+            HAI_DATASET_TRAIN, self.MODEL, BATCH_SIZE, epoch
+        )
 
         # Save Trained model
         with open("model.pt", "wb") as f:
@@ -147,7 +187,7 @@ class Baseline:
         self.MODEL.load_state_dict(SAVED_MODEL["state"])
 
         # Check graphs
-        '''
+        """
         plt.figure(figsize=(16, 4))
         plt.title("Training Loss Graph")
         plt.xlabel("epochs")
@@ -155,7 +195,7 @@ class Baseline:
         plt.yscale("log")
         plt.plot(SAVED_MODEL["loss_history"])
         plt.show()
-        '''
+        """
 
     def Validation(self, VALIDATION_DATASET):
         # Load Validation set
@@ -163,52 +203,64 @@ class Baseline:
 
         # Normalization validation set
         VALIDATION_DF = Baseline.normalize(
-            VALIDATION_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX)
+            VALIDATION_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET],
+            self.TAG_MIN,
+            self.TAG_MAX,
+        )
 
         # Validation checks boundary
         Baseline.boundary_check(VALIDATION_DF)
 
         self.HAI_DATASET_VALIDATION = HaiDataset(
-            VALIDATION_DF_RAW[TIMESTAMP_FIELD], VALIDATION_DF, attacks=VALIDATION_DF_RAW[ATTACK_FIELD]
+            VALIDATION_DF_RAW[TIMESTAMP_FIELD],
+            VALIDATION_DF,
+            attacks=VALIDATION_DF_RAW[ATTACK_FIELD],
         )
 
         # Evaluate models
         self.MODEL.eval()
         CHECK_TS, CHECK_DIST, CHECK_ATT = Baseline.inference(
-            self.HAI_DATASET_VALIDATION, self.MODEL, BATCH_SIZE)
+            self.HAI_DATASET_VALIDATION, self.MODEL, BATCH_SIZE
+        )
 
         # Get Anomaly score
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         # Setting Threshold
-        self.THRESHOLD = 0.026
+        self.THRESHOLD = 0.029545
 
         # Check Graph
-        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=2, THRESHOLD=THRESHOLD)
+        # Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, 2, self.THRESHOLD)
 
         LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
         ATTACK_LABELS = Baseline.put_labels(
-            np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5)
+            np.array(VALIDATION_DF_RAW[ATTACK_FIELD]), threshold=0.5
+        )
         FINAL_LABELS = Baseline.fill_blank(
-            CHECK_TS, LABELS, np.array(VALIDATION_DF_RAW[TIMESTAMP_FIELD]))
+            CHECK_TS, LABELS, np.array(VALIDATION_DF_RAW[TIMESTAMP_FIELD])
+        )
 
-        TaPR = etapr.evaluate_haicon(
-            anomalies=ATTACK_LABELS, predictions=FINAL_LABELS)
-        print(
-            f"F1: {TaPR['f1']:.3f} (TaP: {TaPR['TaP']:.3f}, TaR: {TaPR['TaR']:.3f})")
+        TaPR = etapr.evaluate_haicon(anomalies=ATTACK_LABELS, predictions=FINAL_LABELS)
+        print(f"F1: {TaPR['f1']:.3f} (TaP: {TaPR['TaP']:.3f}, TaR: {TaPR['TaR']:.3f})")
         print(f"# of detected anomalies: {len(TaPR['Detected_Anomalies'])}")
-        #print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
+        # print(f"Detected anomalies: {TaPR['Detected_Anomalies']}")
 
-        return TaPR['f1']
+        return TaPR["f1"]
 
     def Testing(self, TEST_DATASET):
-
         # Get test set
         TEST_DF_RAW = Baseline.dataframe_from_csvs(TEST_DATASET)
 
         # Baseline.Normalize test
-        TEST_DF = Baseline.normalize(
-            TEST_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET], self.TAG_MIN, self.TAG_MAX).ewm(alpha=0.9).mean()
+        TEST_DF = (
+            Baseline.normalize(
+                TEST_DF_RAW[self.VALID_COLUMNS_IN_TRAIN_DATASET],
+                self.TAG_MIN,
+                self.TAG_MAX,
+            )
+            .ewm(alpha=0.9)
+            .mean()
+        )
 
         # Test set boundary checking
         Baseline.boundary_check(TEST_DF)
@@ -220,22 +272,22 @@ class Baseline:
 
         self.MODEL.eval()
         CHECK_TS, CHECK_DIST, CHECK_ATT = Baseline.inference(
-            HAI_DATASET_TEST, self.MODEL, BATCH_SIZE)
+            HAI_DATASET_TEST, self.MODEL, BATCH_SIZE
+        )
 
         ANOMALY_SCORE = np.mean(CHECK_DIST, axis=1)
 
         # Check graph
-        #self.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=THRESHOLD)
+        # Baseline.check_graph(ANOMALY_SCORE, CHECK_ATT, piece=3, THRESHOLD=self.THRESHOLD)
 
         LABELS = Baseline.put_labels(ANOMALY_SCORE, self.THRESHOLD)
 
-        submission = pd.read_csv(
-            '235757_HAICon2021_dataset/sample_submission.csv')
-        submission.index = submission['timestamp']
-        submission.loc[CHECK_TS, 'attack'] = LABELS
+        submission = pd.read_csv("235757_HAICon2021_dataset/sample_submission.csv")
+        submission.index = submission["timestamp"]
+        submission.loc[CHECK_TS, "attack"] = LABELS
         # print(submission)
 
-        submission.to_csv('baseline.csv', index=False)
+        submission.to_csv("baseline.csv", index=False)
 
     # Setting labeling
     def put_labels(distance, threshold):
@@ -286,10 +338,10 @@ class Baseline:
                 peak = max(xs[L:R])
                 axs[i].plot(xticks, att[L:R] * peak * 0.3)
             if THRESHOLD != None:
-                axs[i].axhline(y=THRESHOLD, color='r')
+                axs[i].axhline(y=THRESHOLD, color="r")
         plt.show()
 
-# Do train
+    # Do train
     def train(dataset, model, batch_size, n_epochs):
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         optimizer = torch.optim.AdamW(model.parameters())
@@ -359,7 +411,7 @@ class Baseline:
 
     def Doin(self):
         # Do training
-        self.Training(TRAIN_DATASET, stride)
+        self.Training(TRAIN_DATASET, stride, epoch)
         # Do Validation
         f1_score = self.Validation(VALIDATION_DATASET)
         # Do Testing
@@ -372,35 +424,15 @@ class Baseline:
 
 
 if __name__ == "__main__":
-    WINDOW_GIVEN = 79
-    WINDOW_SIZE = WINDOW_GIVEN+1
-    N_HIDDENS = 50
-    N_LAYERS = 2
-    BATCH_SIZE = 512
+    f1_max = -1
+    hidden_max = -1
 
-    # Dataset Setting
-    TRAIN_DATASET = sorted(
-        [x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
-    TEST_DATASET = sorted(
-        [x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")])
-    VALIDATION_DATASET = sorted(
-        [x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")])
-
-    # Setting columns to timestame, id, field
-    TIMESTAMP_FIELD = "timestamp"
-    IDSTAMP_FIELD = 'id'
-    ATTACK_FIELD = "attack"
-
-    # Run in range
-    # f1_max = -1
-    # for stride in range(1, 11):
-    #     f1_score = Baseline().Doin()
-    #     if f1_max < f1_score:
-    #         f1_max = f1_score
-    #         tmp_stride = stride
-    # print("F1 Max:", f1_max)
-    # print("Stride:", tmp_stride)
-
-    # Run only one
-    stride = 4
-    print(Baseline().Doin())
+    for N_HIDDENS in range(82, 200):
+        tmp_f1 = Baseline().Doin()
+        if f1_max < tmp_f1:
+            f1_max = tmp_f1
+            hidden_max = N_HIDDENS
+            print(tmp_f1)
+            print(hidden_max)
+    print(tmp_f1)
+    print(hidden_max)
