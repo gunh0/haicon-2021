@@ -34,25 +34,6 @@ BATCH_SIZE = 512
 stride = 10
 '''
 
-WINDOW_GIVEN = 89
-WINDOW_SIZE = WINDOW_GIVEN+1
-N_HIDDENS = 50
-N_LAYERS = 2
-BATCH_SIZE = 512
-
-# Dataset Setting
-TRAIN_DATASET = sorted(
-    [x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
-TEST_DATASET = sorted(
-    [x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")])
-VALIDATION_DATASET = sorted(
-    [x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")])
-
-# Setting columns to timestame, id, field
-TIMESTAMP_FIELD = "timestamp"
-IDSTAMP_FIELD = 'id'
-ATTACK_FIELD = "attack"
-
 
 class StackedGRU(torch.nn.Module):
     # StackedGRU model
@@ -391,17 +372,35 @@ class Baseline:
 
 
 if __name__ == "__main__":
+    WINDOW_GIVEN = 79
+    WINDOW_SIZE = WINDOW_GIVEN+1
+    N_HIDDENS = 50
+    N_LAYERS = 2
+    BATCH_SIZE = 512
+
+    # Dataset Setting
+    TRAIN_DATASET = sorted(
+        [x for x in Path("235757_HAICon2021_dataset/train/").glob("*.csv")])
+    TEST_DATASET = sorted(
+        [x for x in Path("235757_HAICon2021_dataset/test/").glob("*.csv")])
+    VALIDATION_DATASET = sorted(
+        [x for x in Path("235757_HAICon2021_dataset/validation/").glob("*.csv")])
+
+    # Setting columns to timestame, id, field
+    TIMESTAMP_FIELD = "timestamp"
+    IDSTAMP_FIELD = 'id'
+    ATTACK_FIELD = "attack"
 
     # Run in range
-    f1_max = -1
-    for stride in range(1, 11):
-        f1_score = Baseline().Doin()
-        if f1_max < f1_score:
-            f1_max = f1_score
-            tmp_stride = stride
-    print("F1 Max:", f1_max)
-    print("Stride:", tmp_stride)
+    # f1_max = -1
+    # for stride in range(1, 11):
+    #     f1_score = Baseline().Doin()
+    #     if f1_max < f1_score:
+    #         f1_max = f1_score
+    #         tmp_stride = stride
+    # print("F1 Max:", f1_max)
+    # print("Stride:", tmp_stride)
 
     # Run only one
-    # stride = 5
-    # print(Baseline().Doin())
+    stride = 4
+    print(Baseline().Doin())
